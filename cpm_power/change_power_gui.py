@@ -20,6 +20,8 @@ class Application_ui(Frame):
 
         self.sp_file_path = ""
         self.port_to_process = ""
+        self.avg_target = 0.0
+        self.peak_target_over_avg = 0.0
 
         # 以下为窗口定义
         self.top = self.winfo_toplevel()
@@ -122,28 +124,26 @@ class Application_ui(Frame):
     # 可以被调用的内部函数
     def calculate_avg_peak(self, data_time: list, data_voltage: list):
         # 数据统计：
-        peak_current = max(data_voltage)
         avg_current = 0.0
         for i in range(len(data_time) - 1):
             avg_current += (data_voltage[i + 1] + data_voltage[i]) * (data_time[i + 1] - data_time[i])
         avg_current = avg_current / 2 / (data_time[len(data_time) - 1] - data_time[0])
+
+        peak_current_over_avg = max(data_voltage) - avg_current
         # print("avg_current:", avg_current)
         # print("peak_current:", peak_current)
-        return avg_current, peak_current
+        return avg_current, peak_current_over_avg
 
-    def change_avg_peak(self, data_voltage: list, avg_current: float, peak_current: float, avg_target: float,
-                        peak_target: float):
+    def change_avg_peak(self, data_voltage: list, avg_current: float, peak_current_over_avg: float, avg_target: float, peak_target_over_avg: float):
         # 数据变换：
-        # 原数据列表为data_voltage，平均值avg_current，峰值peak_current
-        # 目标平均值avg_target,目标峰值peak_target
+        # 原数据列表为data_voltage，平均值：avg_current，峰值减均值：peak_current_over_avg
+        # 目标平均值avg_target,目标峰值减均值peak_target_over_avg
         for i in range(len(data_voltage)):
-            data_voltage[i] = (data_voltage[i] - avg_current) * (peak_target - avg_target) / (
-                    peak_current - avg_current) \
-                              + avg_target
+            data_voltage[i] = (data_voltage[i] - avg_current) / peak_current_over_avg * peak_target_over_avg + avg_target
 
-    def data_process(self, data_ori: list, avg_ratio: float, peak_target: float, stretch: bool):
-        # 对data_ori中的电流值进行变换，使得最终的平均值为原来的avg_ratio倍，如果stretch为真，则是电流峰值为peak_target
-        # stretch表示是否对波形进行y轴方向上的拉伸，如果为True，则在y轴方向上进行拉伸，直到电流峰值达到peak_target
+    def data_process(self, data_ori: list, avg_target: float, peak_target_over_avg: float, stretch: bool):
+        # 对data_ori中的电流值进行变换，使得最终的平均值为avg_target，如果stretch为真，则是电流峰减去均值电流的值为peak_target_over_avg
+        # stretch表示是否对波形进行y轴方向上的拉伸，如果为True，则以avg_target为中心，在y轴方向上进行拉伸，直到电流峰值达到减去avg_target的值达到peak_target_over_avg
 
         data_time = []
         data_voltage = []
@@ -153,25 +153,23 @@ class Application_ui(Frame):
             data_voltage.append(float(line.split()[-1]))
 
         # 数据统计：
-        avg_current, peak_current = self.calculate_avg_peak(data_time, data_voltage)
+        avg_current, peak_current_over_avg = self.calculate_avg_peak(data_time, data_voltage)
         print("\nbefore process:")
         print("avg_current:", avg_current)
-        print("peak_current:", peak_current)
+        print("peak_current_over_avg:", peak_current_over_avg)
 
         # 数据变换：
         # stretch表示是否对波形进行y轴方向上的拉伸
-        avg_target = avg_current * avg_ratio
         if not stretch:
-            self.change_avg_peak(data_voltage, avg_current, peak_current, avg_target,
-                            peak_current + avg_target - avg_current)
+            self.change_avg_peak(data_voltage, avg_current, peak_current_over_avg, avg_target, peak_current_over_avg)
         else:
-            self.change_avg_peak(data_voltage, avg_current, peak_current, avg_target, peak_target)
+            self.change_avg_peak(data_voltage, avg_current, peak_current_over_avg, avg_target, peak_target_over_avg)
 
         # 数据统计：
-        avg_current, peak_current = self.calculate_avg_peak(data_time, data_voltage)
-        print("\nafter process:")
+        avg_current, peak_current_over_avg = self.calculate_avg_peak(data_time, data_voltage)
+        print("\nbefore process:")
         print("avg_current:", avg_current)
-        print("peak_current:", peak_current)
+        print("peak_current_over_avg:", peak_current_over_avg)
 
         # 编码输出数据
         for i in range(len(data_ori)):
@@ -229,7 +227,7 @@ class Application(Application_ui):
 
                 avg_current_tmp, peak_current_tmp = self.calculate_avg_peak(data_time, data_voltage)
                 avg_current += avg_current_tmp
-                peak_current = max((peak_current, abs(peak_current_tmp)))
+                peak_current = max((peak_current, abs(peak_current_tmp)))   # 此处逻辑错误，单个子电流最大峰值不一定是总电流的最大峰值。。。。待改善
 
                 tmp_mem = []
                 start_flag = False
@@ -245,6 +243,8 @@ class Application(Application_ui):
         # 此函数的作用是将gui上的信息读入实例实例变量中
         self.sp_file_path = self.Text1Var.get().replace('\\', '/')
         self.port_to_process = self.Text2Var.get().split("")
+        self.avg_target = float(self.Text5Var.get())
+        self.peak_target_over_avg = float(self.Text4Var.get())
 
         f = open(self.sp_file_path, 'r')
         lines = f.readlines()
@@ -270,7 +270,9 @@ class Application(Application_ui):
             if start_flag and ")" in line:
                 # 此处安放数据处理模块，对存储在tmp_mem中的pwl的数据进行变换
                 # 此处也可将数据块移出进行数据分析
-                tmp_mem = self.data_process(data_ori=tmp_mem, avg_ratio=2, peak_target=0.0, stretch=False)   # 此处算法待完善???????????????????????????
+
+                tmp_mem = self.data_process(data_ori=tmp_mem, avg_target=self.avg_target, peak_target_over_avg=self.peak_target_over_avg, stretch=False)
+                # 此处data_process函数中stretch变量尚未在GUI中体现出来，待完善。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。。
 
                 tmp_mem.append(line)
                 f.writelines(tmp_mem)
