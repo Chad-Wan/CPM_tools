@@ -57,3 +57,9 @@ def data_process(data_ori: list, avg_ratio: float, peak_target: float, stretch: 
         tmp.append("+ " + str(data_time[i]) + "ps " + str(data_voltage[i]) + '\n')
     return tmp
 
+def if_items_inline(item_list: list, line: str):
+    # 该函数判断在line字串里是否包含item_list中的内容
+    for item in item_list:
+        if (" " + item + " ") in line:
+            return True
+    return False
